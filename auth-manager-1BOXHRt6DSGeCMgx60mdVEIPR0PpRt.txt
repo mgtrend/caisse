@@ -1,0 +1,1527 @@
+Prompt de Développement MG CAISSE - Optimisé GitHub Pages
+CONTEXTE ET MISSION
+Vous devez développer MG CAISSE, une application complète de gestion de caisse pour commerçants tunisiens, optimisée pour un hébergement gratuit sur GitHub Pages avec une architecture statique moderne.
+CONTRAINTES D'HÉBERGEMENT GITHUB PAGES (CRITIQUES)
+Paramètres de Déploiement
+bash# Repository GitHub
+REPO_URL: https://github.com/mgtrend/caisse
+GITHUB_PAGES_URL: https://mgtrend.github.io/caisse/
+
+# Configuration GitHub Actions
+DEPLOY_BRANCH: gh-pages
+SOURCE_BRANCH: main
+CUSTOM_DOMAIN: mg-caisse.tn (optionnel)
+Limitations Techniques STRICTES GitHub Pages
+
+Fichiers statiques uniquement (HTML, CSS, JS, images)
+Pas de PHP/MySQL/backend sur GitHub Pages
+Taille repository: 1GB maximum recommandé
+Bande passante: 100GB/mois (largement suffisant)
+Fichiers: < 100MB par fichier
+Architecture: SPA (Single Page Application) obligatoire
+Base de données: LocalStorage + IndexedDB + API externes
+
+ARCHITECTURE TECHNIQUE ADAPTÉE
+Frontend SPA Moderne (GitHub Pages Compatible)
+javascript// Stack moderne optimisé
+- HTML5 + CSS3 (Tailwind CDN ou intégré)
+- JavaScript ES6+ (Vanilla ou Framework léger)
+- PWA avec Service Worker
+- IndexedDB pour stockage local robuste
+- API REST externe (Firebase/Supabase gratuit)
+- GitHub Actions pour déploiement automatique
+Structure de Fichiers Optimisée
+/
+├── index.html              # Point d'entrée principal
+├── manifest.json          # PWA Manifest
+├── sw.js                  # Service Worker
+├── assets/
+│   ├── css/
+│   │   └── style.min.css  # Styles minifiés
+│   ├── js/
+│   │   ├── app.js         # Application principale
+│   │   ├── db.js          # Gestion IndexedDB
+│   │   ├── auth.js        # Authentification
+│   │   └── sync.js        # Synchronisation
+│   └── images/            # Images compressées < 100KB
+├── pages/                 # Pages SPA
+│   ├── login.html
+│   ├── pos.html
+│   └── admin.html
+├── api/                   # API Mock pour développement
+│   └── mock-data.json
+├── docs/                  # Documentation
+└── .github/
+    └── workflows/
+        └── deploy.yml     # GitHub Actions
+MODULES PRIORITAIRES (Ordre de Développement)
+1. SYSTÈME D'AUTHENTIFICATION LOCAL + API
+javascript// auth.js - Authentification hybride
+class AuthManager {
+    constructor() {
+        this.apiUrl = 'https://api.supabase.co/rest/v1'; // API gratuite
+        this.apiKey = 'YOUR_SUPABASE_KEY';
+        this.localUsers = this.loadLocalUsers();
+    }
+    
+    // Authentification locale pour mode hors-ligne
+    authenticateLocal(email, serialNumber) {
+        const user = this.localUsers.find(u => 
+            u.email === email && u.serial === serialNumber
+        );
+        
+        if (user) {
+            const token = this.generateToken(user);
+            localStorage.setItem('mg_auth_token', token);
+            return { success: true, token, user };
+        }
+        
+        return { success: false, error: 'Utilisateur non trouvé' };
+    }
+    
+    // Authentification via API externe
+    async authenticateOnline(email, serialNumber) {
+        try {
+            const response = await fetch(`${this.apiUrl}/users`, {
+                method: 'POST',
+                headers: {
+                    'apikey': this.apiKey,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ email, serial_number: serialNumber })
+            });
+            
+            const data = await response.json();
+            
+            if (data.length > 0) {
+                const token = this.generateToken(data[0]);
+                localStorage.setItem('mg_auth_token', token);
+                return { success: true, token, user: data[0] };
+            }
+            
+            return { success: false, error: 'Identifiants invalides' };
+        } catch (error) {
+            // Fallback sur authentification locale
+            return this.authenticateLocal(email, serialNumber);
+        }
+    }
+    
+    generateToken(user) {
+        const payload = {
+            id: user.id,
+            email: user.email,
+            serial: user.serial_number,
+            exp: Date.now() + (24 * 60 * 60 * 1000) // 24h
+        };
+        return btoa(JSON.stringify(payload));
+    }
+    
+    validateToken(token) {
+        try {
+            const payload = JSON.parse(atob(token));
+            return payload.exp > Date.now() ? payload : null;
+        } catch (error) {
+            return null;
+        }
+    }
+    
+    loadLocalUsers() {
+        // Utilisateurs de démonstration
+        return [
+            {
+                id: 1,
+                email: 'test@mgcaisse.tn',
+                serial_number: 'MG2024001',
+                name: 'Utilisateur Test',
+                is_active: true
+            },
+            {
+                id: 2,
+                email: 'demo@mgcaisse.tn',
+                serial_number: 'MG2024002',
+                name: 'Compte Démo',
+                is_active: true
+            }
+        ];
+    }
+    
+    logout() {
+        localStorage.removeItem('mg_auth_token');
+        window.location.reload();
+    }
+}
+2. BASE DE DONNÉES LOCALE ROBUSTE (IndexedDB)
+javascript// db.js - Gestionnaire IndexedDB
+class DatabaseManager {
+    constructor() {
+        this.dbName = 'MGCaisseDB';
+        this.version = 1;
+        this.db = null;
+        this.init();
+    }
+    
+    async init() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, this.version);
+            
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                this.db = request.result;
+                resolve(this.db);
+            };
+            
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                
+                // Store des produits
+                if (!db.objectStoreNames.contains('products')) {
+                    const productStore = db.createObjectStore('products', { 
+                        keyPath: 'id', 
+                        autoIncrement: true 
+                    });
+                    productStore.createIndex('name', 'name', { unique: false });
+                    productStore.createIndex('sku', 'sku', { unique: true });
+                    productStore.createIndex('barcode', 'barcode', { unique: true });
+                }
+                
+                // Store des ventes
+                if (!db.objectStoreNames.contains('sales')) {
+                    const salesStore = db.createObjectStore('sales', { 
+                        keyPath: 'id', 
+                        autoIncrement: true 
+                    });
+                    salesStore.createIndex('date', 'created_at', { unique: false });
+                    salesStore.createIndex('total', 'total', { unique: false });
+                }
+                
+                // Store de synchronisation
+                if (!db.objectStoreNames.contains('sync_queue')) {
+                    const syncStore = db.createObjectStore('sync_queue', { 
+                        keyPath: 'id', 
+                        autoIncrement: true 
+                    });
+                    syncStore.createIndex('status', 'status', { unique: false });
+                }
+                
+                // Insérer des données de test
+                this.insertTestData(db);
+            };
+        });
+    }
+    
+    insertTestData(db) {
+        const transaction = db.transaction(['products'], 'readwrite');
+        const store = transaction.objectStore('products');
+        
+        const testProducts = [
+            { name: 'Pain', sku: 'PAIN001', price: 0.500, stock: 100, min_stock: 10 },
+            { name: 'Lait', sku: 'LAIT001', price: 1.200, stock: 50, min_stock: 5 },
+            { name: 'Café', sku: 'CAFE001', price: 2.500, stock: 30, min_stock: 5 },
+            { name: 'Eau 1.5L', sku: 'EAU001', price: 0.800, stock: 80, min_stock: 10 },
+            { name: 'Biscuits', sku: 'BISC001', price: 1.800, stock: 40, min_stock: 8 }
+        ];
+        
+        testProducts.forEach(product => store.add(product));
+    }
+    
+    // CRUD Operations
+    async addProduct(product) {
+        const transaction = this.db.transaction(['products'], 'readwrite');
+        const store = transaction.objectStore('products');
+        return store.add({
+            ...product,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        });
+    }
+    
+    async getProducts(limit = 50) {
+        const transaction = this.db.transaction(['products'], 'readonly');
+        const store = transaction.objectStore('products');
+        return new Promise((resolve, reject) => {
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result.slice(0, limit));
+            request.onerror = () => reject(request.error);
+        });
+    }
+    
+    async updateProduct(id, updates) {
+        const transaction = this.db.transaction(['products'], 'readwrite');
+        const store = transaction.objectStore('products');
+        
+        const getRequest = store.get(id);
+        getRequest.onsuccess = () => {
+            const product = getRequest.result;
+            if (product) {
+                Object.assign(product, updates, { 
+                    updated_at: new Date().toISOString() 
+                });
+                store.put(product);
+            }
+        };
+    }
+    
+    async deleteSoftProduct(id) {
+        return this.updateProduct(id, { is_deleted: true });
+    }
+    
+    async addSale(sale) {
+        const transaction = this.db.transaction(['sales'], 'readwrite');
+        const store = transaction.objectStore('sales');
+        return store.add({
+            ...sale,
+            created_at: new Date().toISOString()
+        });
+    }
+    
+    async getSales(startDate, endDate) {
+        const transaction = this.db.transaction(['sales'], 'readonly');
+        const store = transaction.objectStore('sales');
+        const index = store.index('date');
+        
+        return new Promise((resolve, reject) => {
+            const request = index.getAll(IDBKeyRange.bound(
+                startDate || new Date(0).toISOString(),
+                endDate || new Date().toISOString()
+            ));
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+    
+    // Synchronisation
+    async addToSyncQueue(action, data) {
+        const transaction = this.db.transaction(['sync_queue'], 'readwrite');
+        const store = transaction.objectStore('sync_queue');
+        return store.add({
+            action,
+            data,
+            status: 'pending',
+            created_at: new Date().toISOString()
+        });
+    }
+    
+    async getSyncQueue() {
+        const transaction = this.db.transaction(['sync_queue'], 'readonly');
+        const store = transaction.objectStore('sync_queue');
+        const index = store.index('status');
+        
+        return new Promise((resolve, reject) => {
+            const request = index.getAll('pending');
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+}
+3. APPLICATION PRINCIPALE PWA
+html<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MG CAISSE - Point de Vente</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#3B82F6">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="MG CAISSE">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="assets/images/icon-32x32.png" sizes="32x32">
+    <link rel="apple-touch-icon" href="assets/images/icon-192x192.png">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Configuration Tailwind -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#10B981',
+                        danger: '#EF4444'
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Styles personnalisés -->
+    <style>
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        
+        .slide-up { animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        
+        .loading-spinner { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        .offline-indicator {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: linear-gradient(45deg, #EF4444, #DC2626);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+        }
+        
+        .online-indicator {
+            background: linear-gradient(45deg, #10B981, #059669) !important;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3) !important;
+        }
+        
+        /* Responsive optimizations */
+        @media (max-width: 768px) {
+            .mobile-hidden { display: none !important; }
+            .mobile-full { width: 100% !important; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans">
+    <!-- Indicateur de connexion -->
+    <div id="connection-status" class="offline-indicator">
+        <span id="connection-text">Mode Hors-ligne</span>
+    </div>
+    
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="fixed inset-0 bg-white flex items-center justify-center z-50">
+        <div class="text-center">
+            <div class="loading-spinner w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full mx-auto mb-4"></div>
+            <h2 class="text-xl font-semibold text-gray-700 mb-2">MG CAISSE</h2>
+            <p class="text-gray-500">Chargement en cours...</p>
+        </div>
+    </div>
+    
+    <!-- Application Container -->
+    <div id="app" class="min-h-screen" style="display: none;">
+        <!-- Login Screen -->
+        <div id="login-screen" class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+            <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md mx-4 slide-up">
+                <div class="text-center mb-8">
+                    <div class="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1"></path>
+                        </svg>
+                    </div>
+                    <h1 class="text-2xl font-bold text-gray-800">MG CAISSE</h1>
+                    <p class="text-gray-600 mt-2">Connectez-vous à votre compte</p>
+                </div>
+                
+                <form id="login-form" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                        <input type="email" id="email" placeholder="votre@email.com" 
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" required>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Numéro de série</label>
+                        <input type="text" id="serial" placeholder="MG2024XXX" 
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" required>
+                    </div>
+                    
+                    <button type="submit" id="login-btn" 
+                            class="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium">
+                        <span id="login-text">Se connecter</span>
+                        <span id="login-spinner" class="loading-spinner w-5 h-5 border-2 border-white border-t-transparent rounded-full ml-2 hidden"></span>
+                    </button>
+                </form>
+                
+                <div class="mt-6 text-center">
+                    <p class="text-sm text-gray-600">Compte de test :</p>
+                    <p class="text-xs text-gray-500 mt-1">test@mgcaisse.tn / MG2024001</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Main POS Interface -->
+        <div id="pos-interface" class="hidden">
+            <!-- Navigation Header -->
+            <nav class="bg-white shadow-sm border-b border-gray-200">
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div class="flex justify-between items-center h-16">
+                        <div class="flex items-center">
+                            <h1 class="text-xl font-bold text-gray-800">MG CAISSE</h1>
+                            <span class="ml-3 px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">En ligne</span>
+                        </div>
+                        <div class="flex items-center space-x-4">
+                            <span id="user-info" class="text-sm text-gray-600"></span>
+                            <button id="logout-btn" class="text-gray-500 hover:text-gray-700">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+            
+            <!-- Main Content -->
+            <div class="max-w-7xl mx-auto p-4">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Products Section -->
+                    <div class="lg:col-span-2">
+                        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                            <div class="p-4 border-b border-gray-200">
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+                                    <h2 class="text-lg font-semibold text-gray-800">Produits</h2>
+                                    <div class="mt-3 sm:mt-0 flex space-x-2">
+                                        <input type="text" id="product-search" placeholder="Rechercher un produit..." 
+                                               class="px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                        <button id="add-product-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm">
+                                            + Ajouter
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="products-grid" class="p-4">
+                                <!-- Products will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Cart Section -->
+                    <div class="lg:col-span-1">
+                        <div class="bg-white rounded-lg shadow-sm border border-gray-200 sticky top-4">
+                            <div class="p-4 border-b border-gray-200">
+                                <h2 class="text-lg font-semibold text-gray-800">Panier</h2>
+                            </div>
+                            <div id="cart-items" class="p-4 max-h-64 overflow-y-auto">
+                                <p class="text-gray-500 text-center py-8">Panier vide</p>
+                            </div>
+                            <div class="p-4 border-t border-gray-200">
+                                <div class="flex justify-between items-center text-lg font-semibold mb-4">
+                                    <span>Total:</span>
+                                    <span id="cart-total">0.000 TND</span>
+                                </div>
+                                <div class="space-y-2">
+                                    <button id="payment-cash" class="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700">
+                                        Payer en Espèces
+                                    </button>
+                                    <button id="payment-card" class="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
+                                        Payer par Carte
+                                    </button>
+                                    <button id="payment-d17" class="w-full bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700">
+                                        Payer D17
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal pour ajouter un produit -->
+    <div id="add-product-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <h3 class="text-lg font-semibold mb-4">Nouveau Produit</h3>
+            <form id="add-product-form" class="space-y-4">
+                <input type="text" id="new-product-name" placeholder="Nom du produit" class="w-full px-3 py-2 border rounded-md" required>
+                <input type="text" id="new-product-sku" placeholder="Code SKU (optionnel)" class="w-full px-3 py-2 border rounded-md">
+                <input type="number" id="new-product-price" placeholder="Prix (TND)" step="0.001" class="w-full px-3 py-2 border rounded-md" required>
+                <input type="number" id="new-product-stock" placeholder="Stock initial" class="w-full px-3 py-2 border rounded-md" value="0">
+                <div class="flex space-x-2">
+                    <button type="button" id="cancel-add-product" class="flex-1 py-2 border border-gray-300 rounded-md">Annuler</button>
+                    <button type="submit" class="flex-1 bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700">Ajouter</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="assets/js/db.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script src="assets/js/app.js"></script>
+</body>
+</html>
+4. SERVICE WORKER POUR PWA
+javascript// sw.js - Service Worker optimisé
+const CACHE_NAME = 'mg-caisse-v1.0.0';
+const STATIC_CACHE = 'mg-static-v1';
+const DYNAMIC_CACHE = 'mg-dynamic-v1';
+
+// Fichiers à mettre en cache
+const STATIC_FILES = [
+    '/',
+    '/index.html',
+    '/manifest.json',
+    '/assets/css/style.min.css',
+    '/assets/js/app.js',
+    '/assets/js/auth.js',
+    '/assets/js/db.js',
+    '/assets/images/icon-192x192.png',
+    '/assets/images/icon-512x512.png',
+    'https://cdn.tailwindcss.com/tailwind.min.js'
+];
+
+// Installation du Service Worker
+self.addEventListener('install', event => {
+    console.log('Service Worker installing...');
+    event.waitUntil(
+        caches.open(STATIC_CACHE)
+            .then(cache => {
+                console.log('Caching static files');
+                return cache.addAll(STATIC_FILES);
+            })
+            .then(() => self.skipWaiting())
+    );
+});
+
+// Activation du Service Worker
+self.addEventListener('activate', event => {
+    console.log('Service Worker activating...');
+    event.waitUntil(
+        caches.keys().then(cacheNames => {
+            return Promise.all(
+                cacheNames.map(cacheName => {
+                    if (cacheName !== STATIC_CACHE && cacheName !== DYNAMIC_CACHE) {
+                        console.log('Deleting old cache:', cacheName);
+                        return caches.delete(cacheName);
+                    }
+                })
+            );
+        }).then(() => self.clients.claim())
+    );
+});
+
+// Stratégie de cache
+self.addEventListener('fetch', event => {
+    const { request } = event;
+    
+    // Stratégie Cache First pour les ressources statiques
+    if (STATIC_FILES.includes(request.url) || request.url.includes('/assets/')) {
+        event.respondWith(
+            caches.match(request)
+                .then(response => {
+                    return response || fetch(request).then(fetchResponse => {
+                        return caches.open(STATIC_CACHE).then(cache => {
+                            cache.put(request, fetchResponse.clone());
+                            return fetchResponse;
+                        });
+                    });
+                })
+        );
+        return;
+    }
+    
+    // Stratégie Network First pour les API
+    if (request.url.includes('/api/') || request.url.includes('supabase.co')) {
+        event.respondWith(
+            fetch(request)
+                .then(response => {
+                    // Sauvegarder en cache si succès
+                    if (response.ok) {
+                        const responseClone = response.clone();
+                        caches.open(DYNAMIC_CACHE).then(cache => {
+                            cache.put(request, responseClone);
+                        });
+                    }
+                    return response;
+                })
+                .catch(() => {
+                    // Fallback sur le cache en cas d'échec
+                    return caches.match(request);
+                })
+        );
+        return;
+    }
+    
+    // Stratégie par défaut
+    event.respondWith(
+        caches.match(request)
+            .then(response => {
+                return response || fetch(request).catch(() => {
+                    // Page offline par défaut
+                    if (request.headers.get('accept').includes('text/html')) {
+                        return caches.match('/index.html');
+                    }
+                });
+            })
+    );
+});
+
+// Gestion des messages depuis l'application
+self.addEventListener('message', event => {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
+    }
+    
+    if (event.data && event.data.type === 'CACHE_URLS') {
+        const urlsToCache = event.data.payload;
+        caches.open(DYNAMIC_CACHE)
+            .then(cache => cache.addAll(urlsToCache));
+    }
+});
+
+// Synchronisation en arrière-plan
+self.addEventListener('sync', event => {
+    if (event.tag === 'background-sync') {
+        event.waitUntil(doBackgroundSync());
+    }
+});
+
+async function doBackgroundSync() {
+    // Synchroniser les données en attente
+    try {
+        const cache = await caches.open(DYNAMIC_CACHE);
+        const requests = await cache.keys();
+        
+        for (const request of requests) {
+            if (request.url.includes('sync-queue')) {
+                try {
+                    await fetch(request);
+                    await cache.delete(request);
+                } catch (error) {
+                    console.log('Sync failed for:', request.url);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Background sync failed:', error);
+    }
+}
+5. MANIFEST PWA
+json// manifest.json
+{
+    "name": "MG CAISSE - Point de Vente",
+    "short_name": "MG CAISSE",
+    "description": "Application de gestion de caisse pour commerçants tunisiens",
+    "version": "1.0.0",
+    "start_url": "/",
+    "display": "standalone",
+    "orientation": "portrait-primary",
+    "theme_color": "#3B82F6",
+    "background_color": "#F8FAFC",
+    "scope": "/",
+    "lang": "fr",
+    "dir": "ltr",
+    
+    "icons": [
+        {
+            "src": "assets/images/icon-72x72.png",
+            "sizes": "72x72",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "assets/images/icon-96x96.png",
+            "sizes": "96x96",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "assets/images/icon-128x128.png",
+            "sizes": "128x128",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "assets/images/icon-144x144.png",
+            "sizes": "144x144",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "assets/images/icon-152x152.png",
+            "sizes": "152x152",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "assets/images/icon-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "assets/images/icon-384x384.png",
+            "sizes": "384x384",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "assets/images/icon-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    
+    "screenshots": [
+        {
+            "src": "assets/images/screenshot-mobile.png",
+            "sizes": "375x812",
+            "type": "image/png",
+            "form_factor": "narrow"
+        },
+        {
+            "src": "assets/images/screenshot-desktop.png",
+            "sizes": "1280x800",
+            "type": "image/png",
+            "form_factor": "wide"
+        }
+    ],
+    
+    "categories": ["business", "productivity", "finance"],
+    
+    "shortcuts": [
+        {
+            "name": "Nouvelle Vente",
+            "short_name": "Vente",
+            "description": "Démarrer une nouvelle vente",
+            "url": "/?action=new-sale",
+            "icons": [
+                {
+                    "src": "assets/images/shortcut-sale.png",
+                    "sizes": "96x96"
+                }
+            ]
+        },
+        {
+            "name": "Inventaire",
+            "short_name": "Stock",
+            "description": "Gérer l'inventaire",
+            "url": "/?action=inventory",
+            "icons": [
+                {
+                    "src": "assets/images/shortcut-inventory.png",
+                    "sizes": "96x96"
+                }
+            ]
+        }
+    ],
+    
+    "prefer_related_applications": false
+}
+6. APPLICATION PRINCIPALE JAVASCRIPT
+javascript// assets/js/app.js - Application principale
+class MGCaisseApp {
+    constructor() {
+        this.dbManager = new DatabaseManager();
+        this.authManager = new AuthManager();
+        this.cart = [];
+        this.currentUser = null;
+        this.isOnline = navigator.onLine;
+        
+        this.init();
+    }
+    
+    async init() {
+        // Initialiser la base de données
+        await this.dbManager.init();
+        
+        // Vérifier l'authentification
+        this.checkAuth();
+        
+        // Enregistrer le Service Worker
+        this.registerServiceWorker();
+        
+        // Configurer les événements
+        this.setupEventListeners();
+        
+        // Masquer l'écran de chargement
+        setTimeout(() => {
+            document.getElementById('loading-screen').style.display = 'none';
+            document.getElementById('app').style.display = 'block';
+        }, 1500);
+    }
+    
+    checkAuth() {
+        const token = localStorage.getItem('mg_auth_token');
+        const user = this.authManager.validateToken(token);
+        
+        if (user) {
+            this.currentUser = user;
+            this.showPOSInterface();
+        } else {
+            this.showLoginScreen();
+        }
+    }
+    
+    showLoginScreen() {
+        document.getElementById('login-screen').style.display = 'flex';
+        document.getElementById('pos-interface').classList.add('hidden');
+    }
+    
+    showPOSInterface() {
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('pos-interface').classList.remove('hidden');
+        
+        // Afficher les informations utilisateur
+        document.getElementById('user-info').textContent = this.currentUser.email;
+        
+        // Charger les produits
+        this.loadProducts();
+    }
+    
+    setupEventListeners() {
+        // Formulaire de connexion
+        document.getElementById('login-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.handleLogin();
+        });
+        
+        // Déconnexion
+        document.getElementById('logout-btn').addEventListener('click', () => {
+            this.authManager.logout();
+        });
+        
+        // Recherche de produits
+        document.getElementById('product-search').addEventListener('input', (e) => {
+            this.searchProducts(e.target.value);
+        });
+        
+        // Ajouter un produit
+        document.getElementById('add-product-btn').addEventListener('click', () => {
+            this.showAddProductModal();
+        });
+        
+        // Modal d'ajout de produit
+        document.getElementById('add-product-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.addNewProduct();
+        });
+        
+        document.getElementById('cancel-add-product').addEventListener('click', () => {
+            this.hideAddProductModal();
+        });
+        
+        // Paiements
+        document.getElementById('payment-cash').addEventListener('click', () => {
+            this.processPayment('cash');
+        });
+        
+        document.getElementById('payment-card').addEventListener('click', () => {
+            this.processPayment('card');
+        });
+        
+        document.getElementById('payment-d17').addEventListener('click', () => {
+            this.processPayment('d17');
+        });
+        
+        // Détection de connexion
+        window.addEventListener('online', () => {
+            this.isOnline = true;
+            this.updateConnectionStatus();
+            this.syncOfflineData();
+        });
+        
+        window.addEventListener('offline', () => {
+            this.isOnline = false;
+            this.updateConnectionStatus();
+        });
+        
+        // Raccourcis clavier
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                switch (e.key) {
+                    case 'f':
+                        e.preventDefault();
+                        document.getElementById('product-search').focus();
+                        break;
+                    case 'n':
+                        e.preventDefault();
+                        this.showAddProductModal();
+                        break;
+                }
+            }
+        });
+    }
+    
+    async handleLogin() {
+        const email = document.getElementById('email').value;
+        const serial = document.getElementById('serial').value;
+        const loginBtn = document.getElementById('login-btn');
+        const loginText = document.getElementById('login-text');
+        const loginSpinner = document.getElementById('login-spinner');
+        
+        // Afficher le spinner
+        loginText.textContent = 'Connexion...';
+        loginSpinner.classList.remove('hidden');
+        loginBtn.disabled = true;
+        
+        try {
+            let result;
+            
+            if (this.isOnline) {
+                result = await this.authManager.authenticateOnline(email, serial);
+            } else {
+                result = this.authManager.authenticateLocal(email, serial);
+            }
+            
+            if (result.success) {
+                this.currentUser = result.user;
+                this.showPOSInterface();
+            } else {
+                this.showError(result.error || 'Identifiants incorrects');
+            }
+        } catch (error) {
+            this.showError('Erreur de connexion');
+        } finally {
+            // Masquer le spinner
+            loginText.textContent = 'Se connecter';
+            loginSpinner.classList.add('hidden');
+            loginBtn.disabled = false;
+        }
+    }
+    
+    async loadProducts() {
+        try {
+            const products = await this.dbManager.getProducts();
+            this.displayProducts(products);
+        } catch (error) {
+            console.error('Erreur chargement produits:', error);
+            this.showError('Erreur lors du chargement des produits');
+        }
+    }
+    
+    displayProducts(products) {
+        const grid = document.getElementById('products-grid');
+        
+        if (products.length === 0) {
+            grid.innerHTML = '<p class="text-gray-500 text-center py-8">Aucun produit trouvé</p>';
+            return;
+        }
+        
+        const productsHTML = products.map(product => `
+            <div class="product-card bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition-colors cursor-pointer border border-gray-200"
+                 data-product-id="${product.id}"
+                 onclick="app.addToCart(${product.id})">
+                <div class="flex justify-between items-start mb-2">
+                    <h3 class="font-medium text-gray-800 text-sm">${product.name}</h3>
+                    <span class="text-blue-600 font-semibold text-sm">${product.price.toFixed(3)} TND</span>
+                </div>
+                <div class="flex justify-between items-center text-xs text-gray-600">
+                    <span>Stock: ${product.stock}</span>
+                    ${product.sku ? `<span>SKU: ${product.sku}</span>` : ''}
+                </div>
+                ${product.stock <= product.min_stock ? 
+                    '<div class="mt-2 text-xs text-red-600 font-medium">Stock faible</div>' : ''}
+            </div>
+        `).join('');
+        
+        grid.innerHTML = `<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">${productsHTML}</div>`;
+    }
+    
+    async searchProducts(query) {
+        if (!query.trim()) {
+            this.loadProducts();
+            return;
+        }
+        
+        try {
+            const allProducts = await this.dbManager.getProducts();
+            const filtered = allProducts.filter(product => 
+                product.name.toLowerCase().includes(query.toLowerCase()) ||
+                (product.sku && product.sku.toLowerCase().includes(query.toLowerCase()))
+            );
+            this.displayProducts(filtered);
+        } catch (error) {
+            console.error('Erreur recherche:', error);
+        }
+    }
+    
+    async addToCart(productId) {
+        try {
+            const products = await this.dbManager.getProducts();
+            const product = products.find(p => p.id === productId);
+            
+            if (!product) {
+                this.showError('Produit non trouvé');
+                return;
+            }
+            
+            if (product.stock <= 0) {
+                this.showError('Produit en rupture de stock');
+                return;
+            }
+            
+            // Vérifier si le produit est déjà dans le panier
+            const existingItem = this.cart.find(item => item.id === productId);
+            
+            if (existingItem) {
+                if (existingItem.quantity >= product.stock) {
+                    this.showError('Stock insuffisant');
+                    return;
+                }
+                existingItem.quantity++;
+            } else {
+                this.cart.push({
+                    id: productId,
+                    name: product.name,
+                    price: product.price,
+                    quantity: 1,
+                    stock: product.stock
+                });
+            }
+            
+            this.updateCartDisplay();
+            this.showSuccessToast(`${product.name} ajouté au panier`);
+        } catch (error) {
+            console.error('Erreur ajout panier:', error);
+            this.showError('Erreur lors de l\'ajout au panier');
+        }
+    }
+    
+    updateCartDisplay() {
+        const cartItems = document.getElementById('cart-items');
+        const cartTotal = document.getElementById('cart-total');
+        
+        if (this.cart.length === 0) {
+            cartItems.innerHTML = '<p class="text-gray-500 text-center py-8">Panier vide</p>';
+            cartTotal.textContent = '0.000 TND';
+            return;
+        }
+        
+        const itemsHTML = this.cart.map(item => `
+            <div class="flex justify-between items-center py-2 border-b border-gray-100">
+                <div class="flex-1">
+                    <div class="font-medium text-sm">${item.name}</div>
+                    <div class="text-xs text-gray-600">${item.price.toFixed(3)} TND x ${item.quantity}</div>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="app.updateCartQuantity(${item.id}, ${item.quantity - 1})" 
+                            class="w-6 h-6 bg-gray-200 rounded text-xs hover:bg-gray-300">-</button>
+                    <span class="text-sm font-medium">${item.quantity}</span>
+                    <button onclick="app.updateCartQuantity(${item.id}, ${item.quantity + 1})" 
+                            class="w-6 h-6 bg-gray-200 rounded text-xs hover:bg-gray-300">+</button>
+                    <button onclick="app.removeFromCart(${item.id})" 
+                            class="w-6 h-6 bg-red-200 text-red-600 rounded text-xs hover:bg-red-300">×</button>
+                </div>
+            </div>
+        `).join('');
+        
+        cartItems.innerHTML = itemsHTML;
+        
+        const total = this.cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        cartTotal.textContent = `${total.toFixed(3)} TND`;
+    }
+    
+    updateCartQuantity(productId, newQuantity) {
+        if (newQuantity <= 0) {
+            this.removeFromCart(productId);
+            return;
+        }
+        
+        const item = this.cart.find(item => item.id === productId);
+        if (item) {
+            if (newQuantity > item.stock) {
+                this.showError('Stock insuffisant');
+                return;
+            }
+            item.quantity = newQuantity;
+            this.updateCartDisplay();
+        }
+    }
+    
+    removeFromCart(productId) {
+        this.cart = this.cart.filter(item => item.id !== productId);
+        this.updateCartDisplay();
+    }
+    
+    async processPayment(method) {
+        if (this.cart.length === 0) {
+            this.showError('Panier vide');
+            return;
+        }
+        
+        const total = this.cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        
+        try {
+            // Créer la vente
+            const sale = {
+                user_id: this.currentUser.id,
+                total: total,
+                items: this.cart.map(item => ({
+                    id: item.id,
+                    name: item.name,
+                    price: item.price,
+                    quantity: item.quantity
+                })),
+                payment_method: method,
+                created_at: new Date().toISOString()
+            };
+            
+            await this.dbManager.addSale(sale);
+            
+            // Mettre à jour les stocks
+            for (const item of this.cart) {
+                await this.dbManager.updateProduct(item.id, {
+                    stock: item.stock - item.quantity
+                });
+            }
+            
+            // Ajouter à la file de synchronisation si hors ligne
+            if (!this.isOnline) {
+                await this.dbManager.addToSyncQueue('create_sale', sale);
+            }
+            
+            // Vider le panier
+            this.cart = [];
+            this.updateCartDisplay();
+            
+            // Recharger les produits
+            this.loadProducts();
+            
+            this.showSuccessToast(`Paiement de ${total.toFixed(3)} TND effectué avec succès`);
+            
+        } catch (error) {
+            console.error('Erreur paiement:', error);
+            this.showError('Erreur lors du paiement');
+        }
+    }
+    
+    showAddProductModal() {
+        document.getElementById('add-product-modal').classList.remove('hidden');
+    }
+    
+    hideAddProductModal() {
+        document.getElementById('add-product-modal').classList.add('hidden');
+        document.getElementById('add-product-form').reset();
+    }
+    
+    async addNewProduct() {
+        const name = document.getElementById('new-product-name').value;
+        const sku = document.getElementById('new-product-sku').value;
+        const price = parseFloat(document.getElementById('new-product-price').value);
+        const stock = parseInt(document.getElementById('new-product-stock').value) || 0;
+        
+        if (!name || !price) {
+            this.showError('Nom et prix obligatoires');
+            return;
+        }
+        
+        try {
+            const product = {
+                name,
+                sku: sku || null,
+                price,
+                stock,
+                min_stock: Math.max(1, Math.floor(stock * 0.1))
+            };
+            
+            await this.dbManager.addProduct(product);
+            
+            this.hideAddProductModal();
+            this.loadProducts();
+            this.showSuccessToast('Produit ajouté avec succès');
+            
+        } catch (error) {
+            console.error('Erreur ajout produit:', error);
+            this.showError('Erreur lors de l\'ajout du produit');
+        }
+    }
+    
+    updateConnectionStatus() {
+        const indicator = document.getElementById('connection-status');
+        const text = document.getElementById('connection-text');
+        
+        if (this.isOnline) {
+            indicator.classList.add('online-indicator');
+            text.textContent = 'En ligne';
+            setTimeout(() => {
+                indicator.style.display = 'none';
+            }, 2000);
+        } else {
+            indicator.classList.remove('online-indicator');
+            text.textContent = 'Mode Hors-ligne';
+            indicator.style.display = 'block';
+        }
+    }
+    
+    async syncOfflineData() {
+        try {
+            const syncQueue = await this.dbManager.getSyncQueue();
+            
+            for (const item of syncQueue) {
+                // Simulation de synchronisation
+                console.log('Synchronizing:', item);
+                
+                // Marquer comme synchronisé
+                await this.dbManager.updateSyncStatus(item.id, 'synced');
+            }
+            
+            if (syncQueue.length > 0) {
+                this.showSuccessToast(`${syncQueue.length} éléments synchronisés`);
+            }
+        } catch (error) {
+            console.error('Erreur synchronisation:', error);
+        }
+    }
+    
+    registerServiceWorker() {
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js')
+                .then(registration => {
+                    console.log('Service Worker registered:', registration);
+                    
+                    // Gérer les mises à jour
+                    registration.addEventListener('updatefound', () => {
+                        const newWorker = registration.installing;
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                this.showUpdateNotification();
+                            }
+                        });
+                    });
+                })
+                .catch(error => {
+                    console.error('Service Worker registration failed:', error);
+                });
+        }
+    }
+    
+    showUpdateNotification() {
+        const notification = document.createElement('div');
+        notification.className = 'fixed bottom-4 right-4 bg-blue-600 text-white p-4 rounded-lg shadow-lg z-50';
+        notification.innerHTML = `
+            <div class="flex items-center space-x-3">
+                <span>Nouvelle version disponible</span>
+                <button onclick="this.parentElement.parentElement.remove(); location.reload();" 
+                        class="bg-white text-blue-600 px-3 py-1 rounded text-sm">
+                    Mettre à jour
+                </button>
+            </div>
+        `;
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+            if (notification.parentElement) {
+                notification.remove();
+            }
+        }, 10000);
+    }
+    
+    showError(message) {
+        this.showToast(message, 'error');
+    }
+    
+    showSuccessToast(message) {
+        this.showToast(message, 'success');
+    }
+    
+    showToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        const bgColor = type === 'error' ? 'bg-red-600' : type === 'success' ? 'bg-green-600' : 'bg-blue-600';
+        
+        toast.className = `fixed bottom-4 left-4 ${bgColor} text-white p-4 rounded-lg shadow-lg z-50 slide-up`;
+        toast.textContent = message;
+        
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.remove();
+        }, 3000);
+    }
+}
+
+// Initialiser l'application
+let app;
+document.addEventListener('DOMContentLoaded', () => {
+    app = new MGCaisseApp();
+});
+OPTIMISATIONS SPÉCIFIQUES GITHUB PAGES
+1. GitHub Actions pour Déploiement Automatique
+yaml# .github/workflows/deploy.yml
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: |
+        npm install -g html-minifier-terser
+        npm install -g clean-css-cli
+        npm install -g terser
+        
+    - name: Optimize files
+      run: |
+        # Minifier HTML
+        html-minifier-terser --input-dir . --output-dir dist --file-ext html --remove-comments --collapse-whitespace --minify-css --minify-js
+        
+        # Minifier CSS
+        find . -name "*.css" -not -path "./node_modules/*" -not -path "./dist/*" -exec cleancss -o dist/{} {} \;
+        
+        # Minifier JS
+        find . -name "*.js" -not -path "./node_modules/*" -not -path "./dist/*" -not -path "./sw.js" -exec terser {} -o dist/{} \;
+        
+        # Copier les autres fichiers
+        cp -r assets dist/ || true
+        cp manifest.json dist/ || true
+        cp sw.js dist/ || true
+        
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      if: github.ref == 'refs/heads/main'
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./dist
+        cname: mg-caisse.tn
+2. Configuration API Backend Alternative
+javascript// assets/js/api-config.js
+class APIConfig {
+    constructor() {
+        // Configuration pour différents environnements
+        this.config = {
+            development: {
+                apiUrl: 'http://localhost:3000/api',
+                dbUrl: 'http://localhost:3000/db'
+            },
+            production: {
+                // Utiliser Supabase comme backend gratuit
+                apiUrl: 'https://xyzcompany.supabase.co/rest/v1',
+                apiKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+                
+                // Ou utiliser Firebase
+                firebaseConfig: {
+                    apiKey: "your-api-key",
+                    authDomain: "mg-caisse.firebaseapp.com",
+                    projectId: "mg-caisse",
+                    storageBucket: "mg-caisse.appspot.com",
+                    messagingSenderId: "123456789",
+                    appId: "1:123456789:web:abcdef123456"
+                },
+                
+                // Ou utiliser une API serverless
+                netlifyFunctions: 'https://mg-caisse.netlify.app/.netlify/functions'
+            }
+        };
+        
+        this.env = this.detectEnvironment();
+    }
+    
+    detectEnvironment() {
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            return 'development';
+        }
+        return 'production';
+    }
+    
+    getConfig() {
+        return this.config[this.env];
+    }
+}
+
+// Initialiser la configuration
+const apiConfig = new APIConfig();
+3. Optimisations de Performance
+javascript// assets/js/performance.js
+class PerformanceOptimizer {
+    constructor() {
+        this.init();
+    }
+    
+    init() {
+        // Lazy loading des images
+        this.setupLazyLoading();
+        
+        // Préchargement des ressources critiques
+        this.preloadCriticalResources();
+        
+        // Optimisation du DOM
+        this.optimizeDOM();
+        
+        // Mise en cache intelligente
+        this.setupIntelligentCaching();
+    }
+    
+    setupLazyLoading() {
+        if ('IntersectionObserver' in window) {
+            const imageObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const img = entry.target;
+                        img.src = img.dataset.src;
+                        img.classList.remove('lazy');
+                        imageObserver.unobserve(img);
+                    }
+                });
+            });
+            
+            document.querySelectorAll('img[data-src]').forEach(img => {
+                imageObserver.observe(img);
+            });
+        }
+    }
+    
+    preloadCriticalResources() {
+        const criticalResources = [
+            '/assets/js/db.js',
+            '/assets/js/auth.js',
+            '/assets/css/style.min.css'
+        ];
+        
+        criticalResources.forEach(resource => {
+            const link = document.createElement('link');
+            link.rel = 'preload';
+            link.as = resource.endsWith('.js') ? 'script' : 'style';
+            link.href = resource;
+            document.head.appendChild(link);
+        });
+    }
+    
+    optimizeDOM() {
+        // Utiliser DocumentFragment pour les manipulations DOM multiples
+        this.createDocumentFragment = () => document.createDocumentFragment();
+        
+        // Debounce pour les événements fréquents
+        this.debounce = (func, delay) => {
+            let timeoutId;
+            return (...args) => {
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => func.apply(null, args), delay);
+            };
+        };
+        
+        // Throttle pour les événements de scroll
+        this.throttle = (func, delay) => {
+            let lastCall = 0;
+            return (...args) => {
+                const now = Date.now();
+                if (now - lastCall >= delay) {
+                    lastCall = now;
+                    func.apply(null, args);
+                }
+            };
+        };
+    }
+    
+    setupIntelligentCaching() {
+        // Cache des données fréquemment utilisées
+        this.cache = new Map();
+        
+        // Expiration automatique du cache
+        this.setCacheWithExpiry = (key, value, ttl = 300000) => { // 5 minutes par défaut
+            const expiry = Date.now() + ttl;
+            this.cache.set(key, { value,
