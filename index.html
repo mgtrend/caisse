@@ -227,9 +227,54 @@
         </div>
     </div>
 
+    <!-- Debug Panel -->
+    <div id="debug-panel" class="fixed bottom-0 left-0 right-0 bg-gray-800 text-white p-4 text-xs overflow-auto max-h-32 hidden">
+        <div class="flex justify-between items-center mb-2">
+            <h3 class="font-bold">Console de débogage</h3>
+            <button id="close-debug" class="text-gray-400 hover:text-white">&times;</button>
+        </div>
+        <div id="debug-log" class="font-mono"></div>
+    </div>
+
     <!-- Scripts -->
-    <script src="assets/js/db.js"></script>
+    <script>
+        // Rediriger les logs vers le panneau de débogage
+        if (window.location.search.includes('debug=true')) {
+            const debugPanel = document.getElementById('debug-panel');
+            const debugLog = document.getElementById('debug-log');
+            debugPanel.classList.remove('hidden');
+            
+            document.getElementById('close-debug').addEventListener('click', () => {
+                debugPanel.classList.add('hidden');
+            });
+            
+            const originalConsoleLog = console.log;
+            const originalConsoleError = console.error;
+            
+            console.log = function() {
+                originalConsoleLog.apply(console, arguments);
+                const args = Array.from(arguments);
+                const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
+                const logEntry = document.createElement('div');
+                logEntry.textContent = `[LOG] ${message}`;
+                debugLog.appendChild(logEntry);
+                debugLog.scrollTop = debugLog.scrollHeight;
+            };
+            
+            console.error = function() {
+                originalConsoleError.apply(console, arguments);
+                const args = Array.from(arguments);
+                const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
+                const logEntry = document.createElement('div');
+                logEntry.textContent = `[ERROR] ${message}`;
+                logEntry.classList.add('text-red-400');
+                debugLog.appendChild(logEntry);
+                debugLog.scrollTop = debugLog.scrollHeight;
+            };
+        }
+    </script>
     <script src="assets/js/auth.js"></script>
+    <script src="assets/js/db.js"></script>
     <script src="assets/js/app.js"></script>
 </body>
 </html>

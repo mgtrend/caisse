@@ -14,6 +14,31 @@ const STATIC_FILES = [
   "https://cdn.tailwindcss.com",
 ]
 
+// Ajuster les chemins pour GitHub Pages
+function adjustPath(url) {
+  const basePath = "/caisse"
+
+  // Si l'URL contient déjà le chemin de base ou est une URL externe, ne pas modifier
+  if (url.includes("://") || url.startsWith(basePath)) {
+    return url
+  }
+
+  // Ajouter le chemin de base aux chemins relatifs
+  if (url.startsWith("/")) {
+    return `${basePath}${url}`
+  }
+
+  return `${basePath}/${url}`
+}
+
+// Ajuster les chemins des fichiers statiques
+const ADJUSTED_STATIC_FILES = STATIC_FILES.map((file) => {
+  if (file.startsWith("/") && !file.includes("://")) {
+    return adjustPath(file)
+  }
+  return file
+})
+
 // Installation du Service Worker
 self.addEventListener("install", (event) => {
   console.log("Service Worker installing...")
@@ -22,7 +47,7 @@ self.addEventListener("install", (event) => {
       .open(STATIC_CACHE)
       .then((cache) => {
         console.log("Caching static files")
-        return cache.addAll(STATIC_FILES)
+        return cache.addAll(ADJUSTED_STATIC_FILES)
       })
       .then(() => self.skipWaiting()),
   )
@@ -52,18 +77,38 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event
 
+  // Ajuster l'URL pour la comparaison
+  const url = new URL(request.url)
+  const adjustedUrl = adjustPath(url.pathname)
+
+  // Vérifier si c'est un fichier statique
+  const isStaticFile =
+    ADJUSTED_STATIC_FILES.includes(adjustedUrl) ||
+    url.pathname.includes("/assets/") ||
+    url.pathname.endsWith(".js") ||
+    url.pathname.endsWith(".css") ||
+    url.pathname.endsWith(".html")
+
   // Stratégie Cache First pour les ressources statiques
-  if (STATIC_FILES.includes(request.url) || request.url.includes("/assets/")) {
+  if (isStaticFile) {
     event.respondWith(
       caches.match(request).then((response) => {
         return (
           response ||
-          fetch(request).then((fetchResponse) => {
-            return caches.open(STATIC_CACHE).then((cache) => {
-              cache.put(request, fetchResponse.clone())
-              return fetchResponse
+          fetch(request)
+            .then((fetchResponse) => {
+              return caches.open(STATIC_CACHE).then((cache) => {
+                cache.put(request, fetchResponse.clone())
+                return fetchResponse
+              })
             })
-          })
+            .catch(() => {
+              // Fallback pour les fichiers HTML
+              if (request.headers.get("accept").includes("text/html")) {
+                return caches.match("/index.html")
+              }
+              return new Response("Ressource non disponible", { status: 404 })
+            })
         )
       }),
     )
